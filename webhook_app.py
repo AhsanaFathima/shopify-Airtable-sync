@@ -171,6 +171,7 @@ def airtable_webhook():
         # 2. Get price list IDs (cached)
         price_lists = get_market_price_lists()
         print("Price lists:", price_lists)
+        print("DEBUG: price_lists from Shopify:", price_lists, flush=True)
 
         # 3. Update prices per market
         update_results = {}
