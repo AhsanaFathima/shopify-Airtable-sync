@@ -96,8 +96,16 @@ def get_variant_id_by_sku(sku):
 def update_price_list(price_list_id, variant_id, amount, currency):
     """Update price for a variant in a specific price list"""
     PRICE_LIST_MUTATION = """
-    mutation priceListFixedPricesUpdate($priceListId: ID!, $pricesToAdd: [PriceListPriceInput!]!) {
-      priceListFixedPricesUpdate(priceListId: $priceListId, pricesToAdd: $pricesToAdd) {
+    mutation priceListFixedPricesUpdate(
+      $priceListId: ID!, 
+      $pricesToAdd: [PriceListPriceInput!]!,
+      $variantIdsToDelete: [ID!]!
+    ) {
+      priceListFixedPricesUpdate(
+        priceListId: $priceListId, 
+        pricesToAdd: $pricesToAdd,
+        variantIdsToDelete: $variantIdsToDelete
+      ) {
         pricesAdded {
           variant {
             id
@@ -124,17 +132,19 @@ def update_price_list(price_list_id, variant_id, amount, currency):
     }]
     variables = {
         "priceListId": price_list_id,
-        "pricesToAdd": prices_to_add
+        "pricesToAdd": prices_to_add,
+        "variantIdsToDelete": []  # <-- Required by Shopify, even if empty
     }
     result = shopify_graphql(PRICE_LIST_MUTATION, variables)
     # Print userErrors if present
     try:
         user_errors = result["data"]["priceListFixedPricesUpdate"]["userErrors"]
         if user_errors:
-            print("userErrors in price update:", user_errors,flush=True)
+            print("userErrors in price update:", user_errors, flush=True)
     except Exception as e:
-        print("Error extracting userErrors:", e,flush=True)
+        print("Error extracting userErrors:", e, flush=True)
     return result
+
 
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
