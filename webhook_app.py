@@ -1,5 +1,6 @@
 import os
 import requests
+import sys
 from flask import Flask, request, jsonify
 
 app = Flask(__name__)
@@ -29,8 +30,8 @@ def shopify_graphql(query, variables=None):
         payload["variables"] = variables
     print(f"Sending GraphQL to: {url} | Variables: {variables}")
     response = requests.post(url, headers=headers, json=payload)
-    print("GraphQL status code:", response.status_code)
-    print("GraphQL response:", response.text)
+    print("GraphQL status code:", response.status_code,flush=True)
+    print("GraphQL response:", response.text,flush=True)
     response.raise_for_status()
     return response.json()
 
@@ -38,7 +39,7 @@ def get_market_price_lists():
     """Fetch all markets and price lists from Shopify, with caching."""
     global CACHED_PRICE_LISTS
     if CACHED_PRICE_LISTS is not None:
-        print("Using cached price lists.")
+        print("Using cached price lists.",flush=True)
         return CACHED_PRICE_LISTS
 
     MARKET_QUERY = """
@@ -69,7 +70,7 @@ def get_market_price_lists():
             if pl:
                 price_lists[name] = {"id": pl["id"], "currency": pl["currency"]}
     CACHED_PRICE_LISTS = price_lists
-    print("Cached price lists:", CACHED_PRICE_LISTS)
+    print("Cached price lists:", CACHED_PRICE_LISTS,flush=True)
     return price_lists
 
 def get_variant_id_by_sku(sku):
@@ -88,7 +89,7 @@ def get_variant_id_by_sku(sku):
     print(f"Variant query result for SKU {sku}:", variant_result)
     nodes = variant_result["data"]["productVariants"]["nodes"]
     if not nodes:
-        print("No variant found for SKU:", sku)
+        print("No variant found for SKU:", sku,flush=True)
         return None
     return nodes[0]["id"]
 
@@ -130,19 +131,20 @@ def update_price_list(price_list_id, variant_id, amount, currency):
     try:
         user_errors = result["data"]["priceListFixedPricesUpdate"]["userErrors"]
         if user_errors:
-            print("userErrors in price update:", user_errors)
+            print("userErrors in price update:", user_errors,flush=True)
     except Exception as e:
-        print("Error extracting userErrors:", e)
+        print("Error extracting userErrors:", e,flush=True)
     return result
 
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
+    print("=== /airtable-webhook endpoint was called ===")
     try:
         # Security
         secret = request.headers.get("X-Secret-Token")
         print("Secret header:", secret)
         if secret != WEBHOOK_SECRET:
-            print("Unauthorized!")
+            print("Unauthorized!",flush=True)
             return jsonify({"error": "Unauthorized"}), 401
 
         data = request.json
@@ -156,14 +158,14 @@ def airtable_webhook():
         print("SKU:", sku)
         print("Prices:", prices)
         if not sku:
-            print("SKU missing!")
+            print("SKU missing!",flush=True)
             return jsonify({"error": "SKU missing"}), 400
 
         # 1. Find the variant ID by SKU
         variant_id = get_variant_id_by_sku(sku)
         print("Variant ID:", variant_id)
         if not variant_id:
-            print(f"Variant with SKU {sku} not found!")
+            print(f"Variant with SKU {sku} not found!",flush=True)
             return jsonify({"error": f"Variant with SKU {sku} not found"}), 404
 
         # 2. Get price list IDs (cached)
@@ -192,9 +194,9 @@ def airtable_webhook():
                     "userErrors": user_errors
                 }
             else:
-                print(f"No update for market: {market} (missing price or price list)")
+                print(f"No update for market: {market} (missing price or price list)",flush=True)
 
-        print("All update results:", update_results)
+        print("All update results:", update_results,flush=True)
         return jsonify({
             "status": "success",
             "results": update_results,
