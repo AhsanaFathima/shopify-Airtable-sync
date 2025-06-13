@@ -27,7 +27,10 @@ def shopify_graphql(query, variables=None):
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
+    print(f"Sending GraphQL to: {url} | Variables: {variables}")
     response = requests.post(url, headers=headers, json=payload)
+    print("GraphQL status code:", response.status_code)
+    print("GraphQL response:", response.text)
     response.raise_for_status()
     return response.json()
 
@@ -35,6 +38,7 @@ def get_market_price_lists():
     """Fetch all markets and price lists from Shopify, with caching."""
     global CACHED_PRICE_LISTS
     if CACHED_PRICE_LISTS is not None:
+        print("Using cached price lists.")
         return CACHED_PRICE_LISTS
 
     MARKET_QUERY = """
@@ -65,6 +69,7 @@ def get_market_price_lists():
             if pl:
                 price_lists[name] = {"id": pl["id"], "currency": pl["currency"]}
     CACHED_PRICE_LISTS = price_lists
+    print("Cached price lists:", CACHED_PRICE_LISTS)
     return price_lists
 
 def get_variant_id_by_sku(sku):
@@ -80,8 +85,10 @@ def get_variant_id_by_sku(sku):
     }
     """
     variant_result = shopify_graphql(GET_VARIANT_QUERY, {"sku": sku})
+    print(f"Variant query result for SKU {sku}:", variant_result)
     nodes = variant_result["data"]["productVariants"]["nodes"]
     if not nodes:
+        print("No variant found for SKU:", sku)
         return None
     return nodes[0]["id"]
 
@@ -118,7 +125,15 @@ def update_price_list(price_list_id, variant_id, amount, currency):
         "priceListId": price_list_id,
         "pricesToAdd": prices_to_add
     }
-    return shopify_graphql(PRICE_LIST_MUTATION, variables)
+    result = shopify_graphql(PRICE_LIST_MUTATION, variables)
+    # Print userErrors if present
+    try:
+        user_errors = result["data"]["priceListFixedPricesUpdate"]["userErrors"]
+        if user_errors:
+            print("userErrors in price update:", user_errors)
+    except Exception as e:
+        print("Error extracting userErrors:", e)
+    return result
 
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
@@ -166,12 +181,25 @@ def airtable_webhook():
                 print(f"Updating price list {price_list_id} for market {market} with price {price} {currency}")
                 result = update_price_list(price_list_id, variant_id, price, currency)
                 print(f"Price update result for {market}:", result)
-                update_results[market] = result
+                # Extract userErrors for summary
+                user_errors = []
+                try:
+                    user_errors = result["data"]["priceListFixedPricesUpdate"]["userErrors"]
+                except Exception as e:
+                    user_errors = [f"Could not extract userErrors: {e}"]
+                update_results[market] = {
+                    "result": result,
+                    "userErrors": user_errors
+                }
             else:
                 print(f"No update for market: {market} (missing price or price list)")
 
         print("All update results:", update_results)
-        return jsonify({"status": "success", "results": update_results}), 200
+        return jsonify({
+            "status": "success",
+            "results": update_results,
+            "input": data
+        }), 200
     except Exception as e:
         import traceback
         print("ERROR:", str(e))
