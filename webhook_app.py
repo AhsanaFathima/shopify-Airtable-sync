@@ -11,9 +11,9 @@ WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
 # Market display names you expect from Airtable
 MARKET_NAMES = {
-    "UAE": "UAE",
-    "Asia": "Asia",
-    "America": "America"
+    "UAE": "United Arab Emirates",
+    "Asia": "Asia Market with 55 rate",
+    "America": "America & Australia Market"
 }
 
 # In-memory cache for price lists
