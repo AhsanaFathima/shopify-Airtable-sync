@@ -4,9 +4,9 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-SHOP = os.environ["fragrantsouq.com"]  # e.g., "yourstore.myshopify.com"
-TOKEN = os.environ["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"]
-WEBHOOK_SECRET = os.environ["1985447a1574b629ae70dd9f8a1df56f"]
+SHOP = os.environ["SHOPIFY_SHOP"]  # e.g., "yourstore.myshopify.com"
+TOKEN = os.environ["SHOPIFY_API_TOKEN"]
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
 # Market display names you expect from Airtable
 MARKET_NAMES = {
