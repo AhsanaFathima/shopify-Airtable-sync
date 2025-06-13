@@ -19,7 +19,7 @@ MARKET_NAMES = {
 CACHED_PRICE_LISTS = None
 
 def shopify_graphql(query, variables=None):
-    url = f"https://{SHOP}/admin/api/2024-01/graphql.json"
+    url = f"https://{SHOP}/admin/api/2024-01/graphql"
     headers = {
         "X-Shopify-Access-Token": TOKEN,
         "Content-Type": "application/json"
