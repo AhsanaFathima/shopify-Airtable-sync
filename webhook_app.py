@@ -50,7 +50,6 @@ def get_market_price_lists():
           catalogs(first: 5) {
             nodes {
               id
-              name
               priceList {
                 id
                 name
@@ -63,19 +62,23 @@ def get_market_price_lists():
     }
     """
     result = shopify_graphql(MARKET_QUERY, {"first": 10})
+
+    if "data" not in result or "markets" not in result["data"]:
+        print("ERROR: Could not find data.markets in result", flush=True)
+        print("Raw result:", result, flush=True)
+        return {}
+
     price_lists = {}
     print("\nDEBUG: --- Shopify Market Catalogs/PriceLists ---", flush=True)
     for market in result["data"]["markets"]["nodes"]:
         print(f"Market: {market['name']}", flush=True)
         for catalog in market["catalogs"]["nodes"]:
             catalog_id = catalog.get("id")
-            catalog_name = catalog.get("name")
             pl = catalog.get("priceList")
-            print(f"  Catalog: {catalog_name} (ID: {catalog_id})", flush=True)
+            print(f"  Catalog ID: {catalog_id}", flush=True)
             if pl:
                 print(f"    PriceList: {pl['name']} (ID: {pl['id']}, Currency: {pl['currency']})", flush=True)
-                # Use catalog name or market name as needed for mapping
-                price_lists[market["name"]] = {"id": pl["id"], "currency": pl["currency"], "catalog": catalog_name}
+                price_lists[market["name"]] = {"id": pl["id"], "currency": pl["currency"]}
             else:
                 print("    No price list attached.", flush=True)
     CACHED_PRICE_LISTS = price_lists
