@@ -13,7 +13,7 @@ WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 MARKET_NAMES = {
     "UAE": "United Arab Emirates",    # update after debug!
     "Asia": "Asia Market",            # update after debug!
-    "America": "North America"        # update after debug!
+    "America": "America & Australia Market"        # update after debug!
 }
 
 CACHED_PRICE_LISTS = None
