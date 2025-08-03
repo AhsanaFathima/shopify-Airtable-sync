@@ -155,6 +155,26 @@ def update_price_list(price_list_id, variant_id, amount, currency):
         print("Error extracting userErrors:", e, flush=True)
     return result
 
+#Update default price helper function
+
+def update_variant_default_price(variant_id_num, price):
+    """
+    Update the default (base) price of a product variant using Shopify REST API.
+    variant_id_num: Numeric ID of the variant (not GID)
+    price: New price as string or float
+    """
+    url = f"https://{SHOP}/admin/api/2024-01/variants/{variant_id_num}.json"
+    headers = {
+        "X-Shopify-Access-Token": TOKEN,
+        "Content-Type": "application/json"
+    }
+    payload = {"variant": {"id": variant_id_num, "price": str(price)}}
+    print(f"Updating default price for variant {variant_id_num}: {payload}", flush=True)
+    response = requests.put(url, headers=headers, json=payload)
+    print(f"Default price update response: {response.status_code} {response.text}", flush=True)
+    response.raise_for_status()
+    return response.json()
+
 
 def update_variant_details(variant_id, title=None, barcode=None):
     """Update product variant's title and barcode using Shopify REST API"""
