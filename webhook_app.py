@@ -100,8 +100,8 @@ def get_variant_id_by_sku(sku):
 def update_price_list(price_list_id, variant_id, amount, currency):
     """Update price for a variant in a specific price list"""
     PRICE_LIST_MUTATION = """
-    mutation priceListFixedPricesUpdate($priceListId: ID!, $pricesToAdd: [PriceListPriceInput!]!) {
-      priceListFixedPricesUpdate(priceListId: $priceListId, pricesToAdd: $pricesToAdd) {
+    mutation priceListFixedPricesUpdate($priceListId: ID!, $pricesToAdd: [PriceListPriceInput!]!, $variantIdsToDelete: [ID!]!) {
+      priceListFixedPricesUpdate(priceListId: $priceListId, pricesToAdd: $pricesToAdd, variantIdsToDelete: $variantIdsToDelete) {
         pricesAdded {
           variant {
             id
@@ -128,7 +128,8 @@ def update_price_list(price_list_id, variant_id, amount, currency):
     }]
     variables = {
         "priceListId": price_list_id,
-        "pricesToAdd": prices_to_add
+        "pricesToAdd": prices_to_add,
+        "variantIdsToDelete": []  # Fix: Shopify now requires this param
     }
     result = shopify_graphql(PRICE_LIST_MUTATION, variables)
     # Print userErrors if present
@@ -139,6 +140,7 @@ def update_price_list(price_list_id, variant_id, amount, currency):
     except Exception as e:
         print("Error extracting userErrors:", e, flush=True)
     return result
+
 
 def update_variant_details(variant_id, title=None, barcode=None):
     """Update product variant's title and barcode using Shopify REST API"""
