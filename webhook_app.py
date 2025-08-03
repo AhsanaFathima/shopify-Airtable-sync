@@ -247,6 +247,8 @@ def airtable_webhook():
         if not variant_id:
             print(f"Variant with SKU {sku} not found!", flush=True)
             return jsonify({"error": f"Variant with SKU {sku} not found"}), 404
+        # Extract numeric ID from "gid://shopify/ProductVariant/50061062603067"
+        variant_id_num = variant_id.split("/")[-1]
 
         # 2. Update variant title and barcode if provided
         if title or barcode:
@@ -256,11 +258,15 @@ def airtable_webhook():
         if title:
             update_product_title(product_id, title)
 
-        # 4. Get price list IDs (cached)
+        # 4. Update default price (main price) to UAE price
+        if prices.get("UAE"):
+            update_variant_default_price(variant_id_num, prices["UAE"]) 
+
+        # 5. Get price list IDs (cached)
         price_lists = get_market_price_lists()
         print("Price lists:", price_lists, flush=True)
 
-        # 5. Update prices per market
+        # 6. Update prices per market
         update_results = {}
         for market, price in prices.items():
             print(f"Processing market: {market}, price: {price}", flush=True)
