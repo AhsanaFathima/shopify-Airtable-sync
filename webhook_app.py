@@ -35,7 +35,7 @@ def shopify_graphql(query, variables=None):
     return response.json()
 
 def get_market_price_lists():
-    """Fetch all markets and price lists from Shopify, with caching."""
+    """Fetch all markets and price lists from Shopify, with full debug output."""
     global CACHED_PRICE_LISTS
     if CACHED_PRICE_LISTS is not None:
         print("Using cached price lists.", flush=True)
@@ -49,6 +49,8 @@ def get_market_price_lists():
           name
           catalogs(first: 5) {
             nodes {
+              id
+              name
               priceList {
                 id
                 name
@@ -62,15 +64,24 @@ def get_market_price_lists():
     """
     result = shopify_graphql(MARKET_QUERY, {"first": 10})
     price_lists = {}
+    print("\nDEBUG: --- Shopify Market Catalogs/PriceLists ---", flush=True)
     for market in result["data"]["markets"]["nodes"]:
-        name = market["name"]
+        print(f"Market: {market['name']}", flush=True)
         for catalog in market["catalogs"]["nodes"]:
-            pl = catalog["priceList"]
+            catalog_id = catalog.get("id")
+            catalog_name = catalog.get("name")
+            pl = catalog.get("priceList")
+            print(f"  Catalog: {catalog_name} (ID: {catalog_id})", flush=True)
             if pl:
-                price_lists[name] = {"id": pl["id"], "currency": pl["currency"]}
+                print(f"    PriceList: {pl['name']} (ID: {pl['id']}, Currency: {pl['currency']})", flush=True)
+                # Use catalog name or market name as needed for mapping
+                price_lists[market["name"]] = {"id": pl["id"], "currency": pl["currency"], "catalog": catalog_name}
+            else:
+                print("    No price list attached.", flush=True)
     CACHED_PRICE_LISTS = price_lists
-    print("DEBUG: price_lists from Shopify:", price_lists, flush=True)
+    print("DEBUG: price_lists mapping used for updates:", price_lists, flush=True)
     return price_lists
+
 
 def get_variant_id_by_sku(sku):
     """Find a product variant ID by SKU (returns both variant_id and product_id)"""
