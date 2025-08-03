@@ -233,8 +233,8 @@ def airtable_webhook():
             update_variant_details(variant_id, title=title, barcode=barcode)
 
         # 3. (Optional) Update the main product title if provided (uncomment to enable)
-        # if title:
-        #     update_product_title(product_id, title)
+        if title:
+            update_product_title(product_id, title)
 
         # 4. Get price list IDs (cached)
         price_lists = get_market_price_lists()
