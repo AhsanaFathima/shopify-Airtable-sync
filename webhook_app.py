@@ -4,19 +4,18 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Get secrets from environment variables (do not hardcode sensitive data!)
-SHOP = os.environ["SHOPIFY_SHOP"]         # e.g., "yourstore.myshopify.com"
-TOKEN = os.environ["SHOPIFY_API_TOKEN"]   # e.g., starts with shpat_
+# All secrets via environment variables!
+SHOP = os.environ["SHOPIFY_SHOP"]             # e.g., "yourstore.myshopify.com"
+TOKEN = os.environ["SHOPIFY_API_TOKEN"]       # e.g., "shpat_..."
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
-# Market display names you expect from Airtable
+# Set this after seeing your actual price_lists debug print!
 MARKET_NAMES = {
-    "UAE": "UAE",
-    "Asia": "Asia",
-    "America": "America"
+    "UAE": "United Arab Emirates",    # update after debug!
+    "Asia": "Asia Market",            # update after debug!
+    "America": "North America"        # update after debug!
 }
 
-# In-memory cache for price lists
 CACHED_PRICE_LISTS = None
 
 def shopify_graphql(query, variables=None):
@@ -28,7 +27,7 @@ def shopify_graphql(query, variables=None):
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
-    print(f"Sending GraphQL to: {url} | Variables: {variables}", flush=True)
+    print(f"\nSending GraphQL to: {url}\nVariables: {variables}", flush=True)
     response = requests.post(url, headers=headers, json=payload)
     print("GraphQL status code:", response.status_code, flush=True)
     print("GraphQL response:", response.text, flush=True)
@@ -70,11 +69,11 @@ def get_market_price_lists():
             if pl:
                 price_lists[name] = {"id": pl["id"], "currency": pl["currency"]}
     CACHED_PRICE_LISTS = price_lists
-    print("Cached price lists:", CACHED_PRICE_LISTS, flush=True)
+    print("DEBUG: price_lists from Shopify:", price_lists, flush=True)
     return price_lists
 
 def get_variant_id_by_sku(sku):
-    """Find a product variant ID by SKU"""
+    """Find a product variant ID by SKU (returns both variant_id and product_id)"""
     GET_VARIANT_QUERY = """
     query ($sku: String!) {
       productVariants(first: 1, query: $sku) {
@@ -174,6 +173,10 @@ def update_product_title(product_id, new_title):
     print("Product update response:", resp.status_code, resp.text, flush=True)
     return resp.json()
 
+@app.route("/", methods=["GET"])
+def home():
+    return "Airtable-Shopify Sync Webhook is running!", 200
+
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
     try:
@@ -214,8 +217,8 @@ def airtable_webhook():
             update_variant_details(variant_id, title=title, barcode=barcode)
 
         # 3. (Optional) Update the main product title if provided (uncomment to enable)
-        if title:
-            update_product_title(product_id, title)
+        # if title:
+        #     update_product_title(product_id, title)
 
         # 4. Get price list IDs (cached)
         price_lists = get_market_price_lists()
