@@ -4,19 +4,18 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Get secrets from environment variables (do not hardcode sensitive data!)
-SHOP = os.environ["SHOPIFY_SHOP"]         # e.g., "yourstore.myshopify.com"
-TOKEN = os.environ["SHOPIFY_API_TOKEN"]   # e.g., starts with shpat_
+# All secrets via environment variables!
+SHOP = os.environ["SHOPIFY_SHOP"]             # e.g., "yourstore.myshopify.com"
+TOKEN = os.environ["SHOPIFY_API_TOKEN"]       # e.g., "shpat_..."
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 
-# Market display names you expect from Airtable
+# Set after seeing your actual price_lists debug print!
 MARKET_NAMES = {
-    "UAE": "UAE",
-    "Asia": "Asia",
-    "America": "America"
+    "UAE": "United Arab Emirates",
+    "Asia": "Asia Market",
+    "America": "America & Australia Market"
 }
 
-# In-memory cache for price lists
 CACHED_PRICE_LISTS = None
 
 def shopify_graphql(query, variables=None):
@@ -28,7 +27,7 @@ def shopify_graphql(query, variables=None):
     payload = {"query": query}
     if variables:
         payload["variables"] = variables
-    print(f"Sending GraphQL to: {url} | Variables: {variables}", flush=True)
+    print(f"\nSending GraphQL to: {url}\nVariables: {variables}", flush=True)
     response = requests.post(url, headers=headers, json=payload)
     print("GraphQL status code:", response.status_code, flush=True)
     print("GraphQL response:", response.text, flush=True)
@@ -36,7 +35,7 @@ def shopify_graphql(query, variables=None):
     return response.json()
 
 def get_market_price_lists():
-    """Fetch all markets and price lists from Shopify, with caching."""
+    """Fetch all markets and price lists from Shopify, with full debug output."""
     global CACHED_PRICE_LISTS
     if CACHED_PRICE_LISTS is not None:
         print("Using cached price lists.", flush=True)
@@ -50,6 +49,7 @@ def get_market_price_lists():
           name
           catalogs(first: 5) {
             nodes {
+              id
               priceList {
                 id
                 name
@@ -62,19 +62,31 @@ def get_market_price_lists():
     }
     """
     result = shopify_graphql(MARKET_QUERY, {"first": 10})
+
+    if "data" not in result or "markets" not in result["data"]:
+        print("ERROR: Could not find data.markets in result", flush=True)
+        print("Raw result:", result, flush=True)
+        return {}
+
     price_lists = {}
+    print("\nDEBUG: --- Shopify Market Catalogs/PriceLists ---", flush=True)
     for market in result["data"]["markets"]["nodes"]:
-        name = market["name"]
+        print(f"Market: {market['name']}", flush=True)
         for catalog in market["catalogs"]["nodes"]:
-            pl = catalog["priceList"]
+            catalog_id = catalog.get("id")
+            pl = catalog.get("priceList")
+            print(f"  Catalog ID: {catalog_id}", flush=True)
             if pl:
-                price_lists[name] = {"id": pl["id"], "currency": pl["currency"]}
+                print(f"    PriceList: {pl['name']} (ID: {pl['id']}, Currency: {pl['currency']})", flush=True)
+                price_lists[market["name"]] = {"id": pl["id"], "currency": pl["currency"]}
+            else:
+                print("    No price list attached.", flush=True)
     CACHED_PRICE_LISTS = price_lists
-    print("Cached price lists:", CACHED_PRICE_LISTS, flush=True)
+    print("DEBUG: price_lists mapping used for updates:", price_lists, flush=True)
     return price_lists
 
 def get_variant_id_by_sku(sku):
-    """Find a product variant ID by SKU"""
+    """Find a product variant ID by SKU (returns both variant_id and product_id)"""
     GET_VARIANT_QUERY = """
     query ($sku: String!) {
       productVariants(first: 1, query: $sku) {
@@ -101,38 +113,34 @@ def get_variant_id_by_sku(sku):
 def update_price_list(price_list_id, variant_id, amount, currency):
     """Update price for a variant in a specific price list"""
     PRICE_LIST_MUTATION = """
-    mutation priceListFixedPricesUpdate($priceListId: ID!, $pricesToAdd: [PriceListPriceInput!]!) {
-      priceListFixedPricesUpdate(priceListId: $priceListId, pricesToAdd: $pricesToAdd) {
+    mutation priceListFixedPricesUpdate(
+      $priceListId: ID!, 
+      $pricesToAdd: [PriceListPriceInput!]!, 
+      $variantIdsToDelete: [ID!]!
+    ) {
+      priceListFixedPricesUpdate(
+        priceListId: $priceListId, 
+        pricesToAdd: $pricesToAdd, 
+        variantIdsToDelete: $variantIdsToDelete
+      ) {
         pricesAdded {
-          variant {
-            id
-            title
-          }
-          price {
-            amount
-            currencyCode
-          }
+          variant { id title }
+          price { amount currencyCode }
         }
-        userErrors {
-          field
-          message
-        }
+        userErrors { field message }
       }
     }
     """
     prices_to_add = [{
         "variantId": variant_id,
-        "price": {
-            "amount": str(amount),
-            "currencyCode": currency
-        }
+        "price": { "amount": str(amount), "currencyCode": currency }
     }]
     variables = {
         "priceListId": price_list_id,
-        "pricesToAdd": prices_to_add
+        "pricesToAdd": prices_to_add,
+        "variantIdsToDelete": []
     }
     result = shopify_graphql(PRICE_LIST_MUTATION, variables)
-    # Print userErrors if present
     try:
         user_errors = result["data"]["priceListFixedPricesUpdate"]["userErrors"]
         if user_errors:
@@ -140,6 +148,20 @@ def update_price_list(price_list_id, variant_id, amount, currency):
     except Exception as e:
         print("Error extracting userErrors:", e, flush=True)
     return result
+
+def update_variant_default_price(variant_id_num, price):
+    """Update the default (base) price of a product variant using Shopify REST API."""
+    url = f"https://{SHOP}/admin/api/2024-01/variants/{variant_id_num}.json"
+    headers = {
+        "X-Shopify-Access-Token": TOKEN,
+        "Content-Type": "application/json"
+    }
+    payload = {"variant": {"id": variant_id_num, "price": str(price)}}
+    print(f"Updating default price for variant {variant_id_num}: {payload}", flush=True)
+    response = requests.put(url, headers=headers, json=payload)
+    print(f"Default price update response: {response.status_code} {response.text}", flush=True)
+    response.raise_for_status()
+    return response.json()
 
 def update_variant_details(variant_id, title=None, barcode=None):
     """Update product variant's title and barcode using Shopify REST API"""
@@ -152,9 +174,9 @@ def update_variant_details(variant_id, title=None, barcode=None):
     if barcode:
         variant_data["barcode"] = barcode
     if title:
-        variant_data["title"] = title  # Be aware: usually "title" here means the option, not product title
+        variant_data["title"] = title  # usually the option title ("Default Title" for single-variant)
     if not variant_data:
-        return None  # Nothing to update
+        return None
     payload = {"variant": variant_data}
     print(f"Updating variant details for {variant_id}: {payload}", flush=True)
     resp = requests.put(url, headers=headers, json=payload)
@@ -173,6 +195,59 @@ def update_product_title(product_id, new_title):
     resp = requests.put(url, headers=headers, json=payload)
     print("Product update response:", resp.status_code, resp.text, flush=True)
     return resp.json()
+
+# ---------- NEW: metafield upsert (custom.size) ----------
+def set_metafield(owner_id_gid, namespace, key, mtype, value):
+    """
+    Upsert a metafield on a product or variant using GraphQL metafieldsSet.
+    owner_id_gid: e.g. variant GID 'gid://shopify/ProductVariant/...'
+    namespace: e.g. 'custom'
+    key: e.g. 'size'
+    mtype: e.g. 'single_line_text_field' (or 'number_integer', etc.)
+    value: string value to store
+    """
+    METAFIELDS_SET = """
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields {
+          id
+          namespace
+          key
+          type
+          value
+          owner {
+            __typename
+            ... on Product { id title }
+            ... on ProductVariant { id title }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+    """
+    variables = {
+        "metafields": [{
+            "ownerId": owner_id_gid,
+            "namespace": namespace,
+            "key": key,
+            "type": mtype,
+            "value": str(value)
+        }]
+    }
+    print(f"Setting metafield {namespace}.{key}={value} on {owner_id_gid}", flush=True)
+    result = shopify_graphql(METAFIELDS_SET, variables)
+    try:
+        errs = result["data"]["metafieldsSet"]["userErrors"]
+        if errs:
+            print("Metafield userErrors:", errs, flush=True)
+    except Exception as e:
+        print("Error reading metafield userErrors:", e, flush=True)
+    return result
+# --------------------------------------------------------
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Airtable-Shopify Sync Webhook is running!", 200
 
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
@@ -193,35 +268,55 @@ def airtable_webhook():
         }
         title = data.get("Title")
         barcode = data.get("Barcode")
+        size_value = data.get("Size")  # <— NEW: read size from Airtable
         print("SKU:", sku, flush=True)
         print("Prices:", prices, flush=True)
         print("Title:", title, flush=True)
         print("Barcode:", barcode, flush=True)
+        print("Size:", size_value, flush=True)
         if not sku:
             print("SKU missing!", flush=True)
             return jsonify({"error": "SKU missing"}), 400
 
-        # 1. Find the variant ID and product ID by SKU
+        # 1) Find the variant & product
         variant_id, product_id = get_variant_id_by_sku(sku)
         print("Variant ID:", variant_id, flush=True)
         print("Product ID:", product_id, flush=True)
         if not variant_id:
-            print(f"Variant with SKU {sku} not found!", flush=True)
             return jsonify({"error": f"Variant with SKU {sku} not found"}), 404
 
-        # 2. Update variant title and barcode if provided
+        variant_id_num = variant_id.split("/")[-1]
+
+        # 2) Update variant details (title, barcode) if provided
         if title or barcode:
             update_variant_details(variant_id, title=title, barcode=barcode)
 
-        # 3. (Optional) Update the main product title if provided (uncomment to enable)
-        # if title:
-        #     update_product_title(product_id, title)
+        # 3) (Optional) Update main product title if provided
+        if title:
+            update_product_title(product_id, title)
 
-        # 4. Get price list IDs (cached)
+        # 4) Update default/base price to UAE price
+        if prices.get("UAE"):
+            update_variant_default_price(variant_id_num, prices["UAE"])
+
+        # 5) Upsert metafield custom.size (on VARIANT by default)
+        if size_value is not None and str(size_value) != "":
+            # Choose the type that matches your data.
+            # For a simple text like "100 ML", single_line_text_field is perfect.
+            set_metafield(
+                owner_id_gid=variant_id,         # variant-level metafield
+                namespace="custom",
+                key="size",
+                mtype="single_line_text_field",
+                value=str(size_value)
+            )
+            # If you want product-level instead, use:
+            # set_metafield(product_id, "custom", "size", "single_line_text_field", str(size_value))
+
+        # 6) Update price lists per market
         price_lists = get_market_price_lists()
         print("Price lists:", price_lists, flush=True)
 
-        # 5. Update prices per market
         update_results = {}
         for market, price in prices.items():
             print(f"Processing market: {market}, price: {price}", flush=True)
@@ -238,6 +333,7 @@ def airtable_webhook():
 
         print("All update results:", update_results, flush=True)
         return jsonify({"status": "success", "results": update_results}), 200
+
     except Exception as e:
         import traceback
         print("ERROR:", str(e), flush=True)
