@@ -38,7 +38,7 @@ def _rest_url(path):
 def _to_number(x):
     try:
         return float(x) if x not in (None, "") else None
-    except:
+    except Exception:
         return None
 
 # ---------- GRAPHQL ----------
@@ -76,8 +76,8 @@ def get_market_price_lists():
     res = shopify_graphql(QUERY)
     price_lists = {}
 
-    for c in res["data"]["catalogs"]["nodes"]:
-        if c["status"] == "ACTIVE" and c["priceList"]:
+    for c in res.get("data", {}).get("catalogs", {}).get("nodes", []):
+        if c.get("status") == "ACTIVE" and c.get("priceList"):
             price_lists[c["title"]] = {
                 "id": c["priceList"]["id"],
                 "currency": c["priceList"]["currency"],
@@ -110,8 +110,8 @@ def get_variant_product_and_inventory_by_sku(sku):
 
     r = requests.get(_rest_url(f"variants/{variant_id}.json"), headers=_json_headers())
     r.raise_for_status()
-
     inventory_item_id = r.json()["variant"]["inventory_item_id"]
+
     return variant_gid, variant_id, inventory_item_id
 
 # ---------- CURRENT SHOPIFY PRICES ----------
@@ -124,7 +124,7 @@ def get_price_list_price(price_list_id, variant_gid):
     QUERY = """
     query ($pl: ID!, $vid: ID!) {
       priceList(id: $pl) {
-        prices(first: 5, query: $vid) {
+        prices(first: 1, query: $vid) {
           nodes {
             price { amount }
           }
@@ -132,9 +132,20 @@ def get_price_list_price(price_list_id, variant_gid):
       }
     }
     """
-    res = shopify_graphql(QUERY, {"pl": price_list_id, "vid": variant_gid})
-    nodes = res["data"]["priceList"]["prices"]["nodes"]
-    return float(nodes[0]["price"]["amount"]) if nodes else None
+    try:
+        res = shopify_graphql(QUERY, {"pl": price_list_id, "vid": variant_gid})
+        price_list = res.get("data", {}).get("priceList")
+        if not price_list:
+            return None
+
+        nodes = price_list.get("prices", {}).get("nodes", [])
+        if not nodes:
+            return None
+
+        return float(nodes[0]["price"]["amount"])
+    except Exception as e:
+        print("⚠️ Failed to read price list price:", e, flush=True)
+        return None
 
 # ---------- UPDATE ----------
 def update_variant_default_price(variant_id, price):
@@ -202,32 +213,34 @@ def airtable_webhook():
     if not variant_gid:
         return jsonify({"error": "Variant not found"}), 404
 
-    # ✅ UAE default price (auto-detect)
+    # ✅ UAE default price (auto detect)
     if prices["UAE"] is not None:
         old_price = get_variant_default_price(variant_id)
         if old_price != prices["UAE"]:
             update_variant_default_price(variant_id, prices["UAE"])
         else:
-            print("⏭️ UAE price unchanged — skipping", flush=True)
+            print("⏭️ UAE unchanged", flush=True)
 
     price_lists = get_market_price_lists()
 
-    # ✅ Market prices (auto-detect)
+    # ✅ Market prices (auto detect)
     for market, new_price in prices.items():
         if new_price is None:
             continue
 
-        market_name = MARKET_NAMES[market]
+        market_name = MARKET_NAMES.get(market)
+        if not market_name:
+            continue
+
         pl = price_lists.get(market_name)
         if not pl:
             continue
 
         old_price = get_price_list_price(pl["id"], variant_gid)
-
         print(f"🔎 {market} | Old: {old_price} | New: {new_price}", flush=True)
 
         if old_price == new_price:
-            print(f"⏭️ {market} unchanged — skipping", flush=True)
+            print(f"⏭️ {market} unchanged", flush=True)
             continue
 
         update_price_list(pl["id"], variant_gid, new_price, pl["currency"])
