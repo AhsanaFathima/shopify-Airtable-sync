@@ -225,12 +225,18 @@ def airtable_webhook():
     print("Headers:", dict(request.headers), flush=True)
 
     secret = request.headers.get("X-Secret-Token")
-    print("🔑 Secret received:", secret, flush=True)
-    print("🔑 Secret expected:", WEBHOOK_SECRET, flush=True)
 
-    if secret != WEBHOOK_SECRET:
-        print("❌ Unauthorized", flush=True)
-        return jsonify({"error": "Unauthorized"}), 401
+secret_clean = (secret or "").strip()
+expected_clean = (WEBHOOK_SECRET or "").strip()
+
+print("🔑 Secret received (raw):", repr(secret), flush=True)
+print("🔑 Secret expected (raw):", repr(WEBHOOK_SECRET), flush=True)
+print("🔑 Secret received (clean):", secret_clean, flush=True)
+print("🔑 Secret expected (clean):", expected_clean, flush=True)
+
+if secret_clean != expected_clean:
+    print("❌ Unauthorized!", flush=True)
+    return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
     print("📦 Payload:", data, flush=True)
