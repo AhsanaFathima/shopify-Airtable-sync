@@ -7,7 +7,7 @@ app = Flask(__name__)
 print("🚀 Flask app starting...", flush=True)
 
 # ---------- Env ----------
-SHOP = os.environ["SHOPIFY_SHOP"]             # e.g., devfragrantsouq.myshopify.com
+SHOP = os.environ["SHOPIFY_SHOP"]             # devfragrantsouq.myshopify.com
 TOKEN = os.environ["SHOPIFY_API_TOKEN"]       # shpat_...
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 PREFERRED_LOCATION_ID = os.getenv("SHOPIFY_LOCATION_ID")
@@ -35,7 +35,7 @@ CACHED_PRIMARY_LOCATION_ID = None
 def _json_headers():
     return {
         "X-Shopify-Access-Token": TOKEN,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
 def _graphql_url():
@@ -60,17 +60,15 @@ def _to_number(x):
 # ---------- GraphQL ----------
 def shopify_graphql(query, variables=None):
     print("\n🧠 GRAPHQL CALL", flush=True)
-    print("Query:", query, flush=True)
     print("Variables:", variables, flush=True)
 
     resp = requests.post(
         _graphql_url(),
         headers=_json_headers(),
-        json={"query": query, "variables": variables}
+        json={"query": query, "variables": variables},
     )
 
     print("GraphQL status:", resp.status_code, flush=True)
-    print("GraphQL response:", resp.text, flush=True)
     resp.raise_for_status()
     return resp.json()
 
@@ -88,12 +86,10 @@ def get_market_price_lists():
     query {
       catalogs(first: 20, type: MARKET) {
         nodes {
-          id
           title
           status
           priceList {
             id
-            name
             currency
           }
         }
@@ -106,12 +102,10 @@ def get_market_price_lists():
 
     for c in result["data"]["catalogs"]["nodes"]:
         print(f"Catalog: {c['title']} | Status: {c['status']}", flush=True)
-        if c["status"] != "ACTIVE":
-            continue
-        if c["priceList"]:
+        if c["status"] == "ACTIVE" and c["priceList"]:
             price_lists[c["title"]] = {
                 "id": c["priceList"]["id"],
-                "currency": c["priceList"]["currency"]
+                "currency": c["priceList"]["currency"],
             }
 
     print("✅ Final price list map:", price_lists, flush=True)
@@ -149,37 +143,20 @@ def get_variant_product_and_inventory_by_sku(sku):
     inventory_item_id = r.json()["variant"]["inventory_item_id"]
 
     print("✅ Variant found", flush=True)
-    print("Variant GID:", variant_gid, flush=True)
-    print("Product GID:", product_gid, flush=True)
-    print("Inventory Item ID:", inventory_item_id, flush=True)
-
     return variant_gid, product_gid, variant_id, inventory_item_id
 
 # ---------- Default Price ----------
-def update_variant_default_price(variant_id, price, compare_at=None):
+def update_variant_default_price(variant_id, price):
     print(f"💲 Updating default price: {price}", flush=True)
     payload = {"variant": {"id": int(variant_id), "price": str(price)}}
-    if compare_at:
-        payload["variant"]["compare_at_price"] = str(compare_at)
-
-    r = requests.put(_rest_url(f"variants/{variant_id}.json"),
-                     headers=_json_headers(), json=payload)
-    print("Default price response:", r.text, flush=True)
+    r = requests.put(
+        _rest_url(f"variants/{variant_id}.json"),
+        headers=_json_headers(),
+        json=payload,
+    )
     r.raise_for_status()
 
 # ---------- Inventory ----------
-def set_inventory_absolute(item_id, location_id, qty):
-    print(f"📦 Updating inventory → {qty}", flush=True)
-    payload = {
-        "inventory_item_id": int(item_id),
-        "location_id": int(location_id),
-        "available": int(qty)
-    }
-    r = requests.post(_rest_url("inventory_levels/set.json"),
-                      headers=_json_headers(), json=payload)
-    print("Inventory response:", r.text, flush=True)
-    r.raise_for_status()
-
 def get_primary_location_id():
     global CACHED_PRIMARY_LOCATION_ID
     if CACHED_PRIMARY_LOCATION_ID:
@@ -192,7 +169,21 @@ def get_primary_location_id():
     print("📍 Using location:", loc, flush=True)
     return loc
 
-# ---------- Price List Update ----------
+def set_inventory_absolute(item_id, location_id, qty):
+    print(f"📦 Updating inventory → {qty}", flush=True)
+    payload = {
+        "inventory_item_id": int(item_id),
+        "location_id": int(location_id),
+        "available": int(qty),
+    }
+    r = requests.post(
+        _rest_url("inventory_levels/set.json"),
+        headers=_json_headers(),
+        json=payload,
+    )
+    r.raise_for_status()
+
+# ---------- Price List ----------
 def update_price_list(price_list_id, variant_gid, price, currency):
     print(f"➡️ Updating price list {price_list_id}: {price} {currency}", flush=True)
 
@@ -204,15 +195,18 @@ def update_price_list(price_list_id, variant_gid, price, currency):
     }
     """
 
-    res = shopify_graphql(MUTATION, {
-        "pl": price_list_id,
-        "prices": [{
-            "variantId": variant_gid,
-            "price": {"amount": str(price), "currencyCode": currency}
-        }]
-    })
-
-    print("Price list update response:", res, flush=True)
+    shopify_graphql(
+        MUTATION,
+        {
+            "pl": price_list_id,
+            "prices": [
+                {
+                    "variantId": variant_gid,
+                    "price": {"amount": str(price), "currencyCode": currency},
+                }
+            ],
+        },
+    )
 
 # ---------- Routes ----------
 @app.route("/", methods=["GET"])
@@ -222,21 +216,17 @@ def home():
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
     print("\n🔔 === AIRTABLE WEBHOOK HIT ===", flush=True)
-    print("Headers:", dict(request.headers), flush=True)
 
     secret = request.headers.get("X-Secret-Token")
+    secret_clean = (secret or "").strip()
+    expected_clean = (WEBHOOK_SECRET or "").strip()
 
-secret_clean = (secret or "").strip()
-expected_clean = (WEBHOOK_SECRET or "").strip()
+    print("🔑 Secret received:", repr(secret_clean), flush=True)
+    print("🔑 Secret expected:", repr(expected_clean), flush=True)
 
-print("🔑 Secret received (raw):", repr(secret), flush=True)
-print("🔑 Secret expected (raw):", repr(WEBHOOK_SECRET), flush=True)
-print("🔑 Secret received (clean):", secret_clean, flush=True)
-print("🔑 Secret expected (clean):", expected_clean, flush=True)
-
-if secret_clean != expected_clean:
-    print("❌ Unauthorized!", flush=True)
-    return jsonify({"error": "Unauthorized"}), 401
+    if secret_clean != expected_clean:
+        print("❌ Unauthorized", flush=True)
+        return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
     print("📦 Payload:", data, flush=True)
@@ -245,14 +235,20 @@ if secret_clean != expected_clean:
     prices = {
         "UAE": _to_number(data.get("UAE price")),
         "Asia": _to_number(data.get("Asia Price")),
-        "America": _to_number(data.get("America Price"))
+        "America": _to_number(data.get("America Price")),
     }
     qty = _to_number(data.get("Qty given in shopify"))
 
     print("🆔 SKU:", sku, flush=True)
     print("💰 Prices:", prices, flush=True)
 
-    variant_gid, product_gid, variant_id, inventory_item_id = get_variant_product_and_inventory_by_sku(sku)
+    if not sku:
+        return jsonify({"error": "SKU missing"}), 400
+
+    variant_gid, product_gid, variant_id, inventory_item_id = (
+        get_variant_product_and_inventory_by_sku(sku)
+    )
+
     if not variant_gid:
         return jsonify({"error": "Variant not found"}), 404
 
