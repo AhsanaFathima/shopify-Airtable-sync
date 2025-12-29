@@ -117,8 +117,8 @@ def get_variant_product_and_inventory_by_sku(sku):
     print(f"\n🔍 Searching Shopify variant by SKU: {sku}", flush=True)
 
     QUERY = """
-    query ($sku: String!) {
-      productVariants(first: 1, query: $sku) {
+    query ($query: String!) {
+      productVariants(first: 1, query: $query) {
         nodes {
           id
           product { id }
@@ -127,22 +127,37 @@ def get_variant_product_and_inventory_by_sku(sku):
     }
     """
 
-    res = shopify_graphql(QUERY, {"sku": sku})
-    nodes = res["data"]["productVariants"]["nodes"]
+    res = shopify_graphql(QUERY, {"query": f"sku:{sku}"})
+
+    # ---- GraphQL safety checks ----
+    if not res or "data" not in res or res["data"] is None:
+        print("❌ GraphQL returned no data", flush=True)
+        print("Full response:", res, flush=True)
+        return None, None, None, None
+
+    nodes = res["data"].get("productVariants", {}).get("nodes", [])
 
     if not nodes:
-        print("❌ Variant not found", flush=True)
+        print(f"❌ No variant found for SKU {sku}", flush=True)
         return None, None, None, None
 
     variant_gid = nodes[0]["id"]
     product_gid = nodes[0]["product"]["id"]
     variant_id = variant_gid.split("/")[-1]
 
-    r = requests.get(_rest_url(f"variants/{variant_id}.json"), headers=_json_headers())
+    # ---- REST call for inventory item ----
+    r = requests.get(
+        _rest_url(f"variants/{variant_id}.json"),
+        headers=_json_headers()
+    )
     r.raise_for_status()
+
     inventory_item_id = r.json()["variant"]["inventory_item_id"]
 
     print("✅ Variant found", flush=True)
+    print("Variant GID:", variant_gid, flush=True)
+    print("Inventory Item ID:", inventory_item_id, flush=True)
+
     return variant_gid, product_gid, variant_id, inventory_item_id
 
 # ---------- Default Price ----------
