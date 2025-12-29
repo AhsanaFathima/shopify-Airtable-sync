@@ -21,7 +21,6 @@ MARKET_NAMES = {
 
 # ---------- CACHE ----------
 CACHED_PRICE_LISTS = None
-CACHED_PRIMARY_LOCATION_ID = None
 
 # ---------- HELPERS ----------
 def _json_headers():
@@ -84,6 +83,7 @@ def get_market_price_lists():
                 "currency": c["priceList"]["currency"],
             }
 
+    print("📊 Price lists:", price_lists, flush=True)
     CACHED_PRICE_LISTS = price_lists
     return price_lists
 
@@ -94,7 +94,6 @@ def get_variant_product_and_inventory_by_sku(sku):
       productVariants(first: 1, query: $q) {
         nodes {
           id
-          product { id }
         }
       }
     }
@@ -104,15 +103,15 @@ def get_variant_product_and_inventory_by_sku(sku):
     nodes = res.get("data", {}).get("productVariants", {}).get("nodes", [])
 
     if not nodes:
-        return None, None, None, None
+        return None, None, None
 
     variant_gid = nodes[0]["id"]
     variant_id = variant_gid.split("/")[-1]
 
     r = requests.get(_rest_url(f"variants/{variant_id}.json"), headers=_json_headers())
     r.raise_for_status()
-    inventory_item_id = r.json()["variant"]["inventory_item_id"]
 
+    inventory_item_id = r.json()["variant"]["inventory_item_id"]
     return variant_gid, variant_id, inventory_item_id
 
 # ---------- CURRENT SHOPIFY PRICES ----------
@@ -177,7 +176,14 @@ def home():
 def airtable_webhook():
     print("\n🔔 WEBHOOK HIT", flush=True)
 
-    if request.headers.get("X-Secret-Token") != WEBHOOK_SECRET:
+    secret = (request.headers.get("X-Secret-Token") or "").strip()
+    expected = (WEBHOOK_SECRET or "").strip()
+
+    print("🔑 Secret received:", repr(secret), flush=True)
+    print("🔑 Secret expected:", repr(expected), flush=True)
+
+    if secret != expected:
+        print("❌ Unauthorized", flush=True)
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
@@ -213,16 +219,12 @@ def airtable_webhook():
 
         market_name = MARKET_NAMES[market]
         pl = price_lists.get(market_name)
-
         if not pl:
             continue
 
         old_price = get_price_list_price(pl["id"], variant_gid)
 
-        print(
-            f"🔎 {market} | Old: {old_price} | New: {new_price}",
-            flush=True
-        )
+        print(f"🔎 {market} | Old: {old_price} | New: {new_price}", flush=True)
 
         if old_price == new_price:
             print(f"⏭️ {market} unchanged — skipping", flush=True)
