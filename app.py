@@ -110,8 +110,8 @@ def get_variant_product_and_inventory_by_sku(sku):
 
     r = requests.get(_rest_url(f"variants/{variant_id}.json"), headers=_json_headers())
     r.raise_for_status()
-    inventory_item_id = r.json()["variant"]["inventory_item_id"]
 
+    inventory_item_id = r.json()["variant"]["inventory_item_id"]
     return variant_gid, variant_id, inventory_item_id
 
 # ---------- CURRENT SHOPIFY PRICES ----------
@@ -140,7 +140,7 @@ def get_price_list_price(price_list_id, variant_gid):
             return None, None
         return (
             float(nodes[0]["price"]["amount"]),
-            float(nodes[0]["compareAtPrice"]["amount"]) if nodes[0]["compareAtPrice"] else None
+            float(nodes[0]["compareAtPrice"]["amount"]) if nodes[0].get("compareAtPrice") else None
         )
     except Exception:
         return None, None
@@ -151,7 +151,7 @@ def update_variant_default_price(variant_id, price, compare_price=None):
     if compare_price is not None:
         payload["variant"]["compare_at_price"] = str(compare_price)
 
-    print(f"💲 Updating UAE price → {payload}", flush=True)
+    print("💲 Updating UAE price →", payload, flush=True)
 
     requests.put(
         _rest_url(f"variants/{variant_id}.json"),
@@ -159,19 +159,11 @@ def update_variant_default_price(variant_id, price, compare_price=None):
         json=payload,
     ).raise_for_status()
 
-def update_price_list(price_list_id, variant_gid, price, compare_price, currency):
+def update_price_list(price_list_id, variant_gid, price, currency, compare_price=None):
     print(
         f"➡️ Updating price list {price_list_id} → price={price}, compare={compare_price}",
         flush=True
     )
-
-    MUTATION = """
-    mutation ($pl: ID!, $prices: [PriceListPriceInput!]!) {
-      priceListFixedPricesAdd(priceListId: $pl, prices: $prices) {
-        userErrors { message }
-      }
-    }
-    """
 
     price_input = {
         "variantId": variant_gid,
@@ -184,12 +176,17 @@ def update_price_list(price_list_id, variant_gid, price, compare_price, currency
             "currencyCode": currency,
         }
 
+    MUTATION = """
+    mutation ($pl: ID!, $prices: [PriceListPriceInput!]!) {
+      priceListFixedPricesAdd(priceListId: $pl, prices: $prices) {
+        userErrors { message }
+      }
+    }
+    """
+
     shopify_graphql(
         MUTATION,
-        {
-            "pl": price_list_id,
-            "prices": [price_input],
-        },
+        {"pl": price_list_id, "prices": [price_input]},
     )
 
 # ---------- ROUTES ----------
@@ -202,7 +199,9 @@ def airtable_webhook():
     print("\n🔔 WEBHOOK HIT", flush=True)
 
     secret = (request.headers.get("X-Secret-Token") or "").strip()
-    if secret != WEBHOOK_SECRET:
+    expected = (WEBHOOK_SECRET or "").strip()
+
+    if secret != expected:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
@@ -215,9 +214,9 @@ def airtable_webhook():
     }
 
     compare_prices = {
-        "UAE": _to_number(data.get("UAE comparison price")),
-        "Asia": _to_number(data.get("Asia comparison price")),
-        "America": _to_number(data.get("America comparison price")),
+        "UAE": _to_number(data.get("UAE Comparison Price")),
+        "Asia": _to_number(data.get("Asia Comparison Price")),
+        "America": _to_number(data.get("America Comparison Price")),
     }
 
     if not sku:
@@ -227,7 +226,7 @@ def airtable_webhook():
     if not variant_gid:
         return jsonify({"error": "Variant not found"}), 404
 
-    # ✅ UAE (variant level)
+    # UAE default price
     if prices["UAE"] is not None:
         update_variant_default_price(
             variant_id,
@@ -237,7 +236,7 @@ def airtable_webhook():
 
     price_lists = get_market_price_lists()
 
-    # ✅ Market prices + comparison prices
+    # Market price lists
     for market, price in prices.items():
         if price is None:
             continue
@@ -251,8 +250,8 @@ def airtable_webhook():
             pl["id"],
             variant_gid,
             price,
-            compare_prices.get(market),
             pl["currency"],
+            compare_prices.get(market)
         )
 
     print("🎉 SYNC COMPLETE", flush=True)
