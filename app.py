@@ -11,6 +11,7 @@ SHOP = os.environ["SHOPIFY_SHOP"]
 TOKEN = os.environ["SHOPIFY_API_TOKEN"]
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-07")
+PREFERRED_LOCATION_ID = os.getenv("SHOPIFY_LOCATION_ID")
 
 # ---------- MARKET MAPPING ----------
 MARKET_NAMES = {
@@ -21,6 +22,7 @@ MARKET_NAMES = {
 
 # ---------- CACHE ----------
 CACHED_PRICE_LISTS = None
+CACHED_PRIMARY_LOCATION_ID = None
 
 # ---------- HELPERS ----------
 def _json_headers():
@@ -92,9 +94,7 @@ def get_variant_product_and_inventory_by_sku(sku):
     QUERY = """
     query ($q: String!) {
       productVariants(first: 1, query: $q) {
-        nodes {
-          id
-        }
+        nodes { id }
       }
     }
     """
@@ -189,6 +189,75 @@ def update_price_list(price_list_id, variant_gid, price, currency, compare_price
         {"pl": price_list_id, "prices": [price_input]},
     )
 
+# ---------- 🔹 ADDED FUNCTIONS (SAFE) ----------
+
+def update_variant_details(variant_gid, title=None, barcode=None):
+    if not (title or barcode):
+        return
+    var_id = variant_gid.split("/")[-1]
+    payload = {"variant": {"id": int(var_id)}}
+    if title:
+        payload["variant"]["title"] = title
+    if barcode:
+        payload["variant"]["barcode"] = barcode
+
+    requests.put(
+        _rest_url(f"variants/{var_id}.json"),
+        headers=_json_headers(),
+        json=payload,
+    ).raise_for_status()
+
+def update_product_title(product_gid, title):
+    pid = product_gid.split("/")[-1]
+    requests.put(
+        _rest_url(f"products/{pid}.json"),
+        headers=_json_headers(),
+        json={"product": {"id": int(pid), "title": title}},
+    ).raise_for_status()
+
+def set_metafield(owner_id_gid, namespace, key, mtype, value):
+    MUT = """
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        userErrors { message }
+      }
+    }
+    """
+    shopify_graphql(MUT, {
+        "metafields": [{
+            "ownerId": owner_id_gid,
+            "namespace": namespace,
+            "key": key,
+            "type": mtype,
+            "value": str(value)
+        }]
+    })
+
+def get_primary_location_id():
+    global CACHED_PRIMARY_LOCATION_ID
+    if PREFERRED_LOCATION_ID:
+        return PREFERRED_LOCATION_ID
+    if CACHED_PRIMARY_LOCATION_ID:
+        return CACHED_PRIMARY_LOCATION_ID
+
+    r = requests.get(_rest_url("locations.json"), headers=_json_headers())
+    r.raise_for_status()
+    locs = r.json().get("locations", [])
+    primary = next((l for l in locs if l.get("primary")), locs[0])
+    CACHED_PRIMARY_LOCATION_ID = str(primary["id"])
+    return CACHED_PRIMARY_LOCATION_ID
+
+def set_inventory_absolute(inventory_item_id, location_id, qty):
+    requests.post(
+        _rest_url("inventory_levels/set.json"),
+        headers=_json_headers(),
+        json={
+            "inventory_item_id": int(inventory_item_id),
+            "location_id": int(location_id),
+            "available": int(qty),
+        },
+    ).raise_for_status()
+
 # ---------- ROUTES ----------
 @app.route("/", methods=["GET"])
 def home():
@@ -196,12 +265,8 @@ def home():
 
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
-    print("\n🔔 WEBHOOK HIT", flush=True)
-
     secret = (request.headers.get("X-Secret-Token") or "").strip()
-    expected = (WEBHOOK_SECRET or "").strip()
-
-    if secret != expected:
+    if secret != WEBHOOK_SECRET:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
@@ -226,7 +291,6 @@ def airtable_webhook():
     if not variant_gid:
         return jsonify({"error": "Variant not found"}), 404
 
-    # UAE default price
     if prices["UAE"] is not None:
         update_variant_default_price(
             variant_id,
@@ -236,16 +300,12 @@ def airtable_webhook():
 
     price_lists = get_market_price_lists()
 
-    # Market price lists
     for market, price in prices.items():
         if price is None:
             continue
-
-        market_name = MARKET_NAMES.get(market)
-        pl = price_lists.get(market_name)
+        pl = price_lists.get(MARKET_NAMES.get(market))
         if not pl:
             continue
-
         update_price_list(
             pl["id"],
             variant_gid,
@@ -254,7 +314,6 @@ def airtable_webhook():
             compare_prices.get(market)
         )
 
-    print("🎉 SYNC COMPLETE", flush=True)
     return jsonify({"status": "success"}), 200
 
 
