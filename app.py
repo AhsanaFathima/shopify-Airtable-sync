@@ -127,6 +127,7 @@ def get_price_list_price(price_list_id, variant_gid):
         prices(first: 1, query: $vid) {
           nodes {
             price { amount }
+            compareAtPrice { amount }
           }
         }
       }
@@ -134,30 +135,35 @@ def get_price_list_price(price_list_id, variant_gid):
     """
     try:
         res = shopify_graphql(QUERY, {"pl": price_list_id, "vid": variant_gid})
-        price_list = res.get("data", {}).get("priceList")
-        if not price_list:
-            return None
-
-        nodes = price_list.get("prices", {}).get("nodes", [])
+        nodes = res["data"]["priceList"]["prices"]["nodes"]
         if not nodes:
-            return None
-
-        return float(nodes[0]["price"]["amount"])
-    except Exception as e:
-        print("⚠️ Failed to read price list price:", e, flush=True)
-        return None
+            return None, None
+        return (
+            float(nodes[0]["price"]["amount"]),
+            float(nodes[0]["compareAtPrice"]["amount"]) if nodes[0]["compareAtPrice"] else None
+        )
+    except Exception:
+        return None, None
 
 # ---------- UPDATE ----------
-def update_variant_default_price(variant_id, price):
-    print(f"💲 Updating UAE default price → {price}", flush=True)
+def update_variant_default_price(variant_id, price, compare_price=None):
+    payload = {"variant": {"id": int(variant_id), "price": str(price)}}
+    if compare_price is not None:
+        payload["variant"]["compare_at_price"] = str(compare_price)
+
+    print(f"💲 Updating UAE price → {payload}", flush=True)
+
     requests.put(
         _rest_url(f"variants/{variant_id}.json"),
         headers=_json_headers(),
-        json={"variant": {"id": int(variant_id), "price": str(price)}},
+        json=payload,
     ).raise_for_status()
 
-def update_price_list(price_list_id, variant_gid, price, currency):
-    print(f"➡️ Updating price list {price_list_id} → {price}", flush=True)
+def update_price_list(price_list_id, variant_gid, price, compare_price, currency):
+    print(
+        f"➡️ Updating price list {price_list_id} → price={price}, compare={compare_price}",
+        flush=True
+    )
 
     MUTATION = """
     mutation ($pl: ID!, $prices: [PriceListPriceInput!]!) {
@@ -167,14 +173,22 @@ def update_price_list(price_list_id, variant_gid, price, currency):
     }
     """
 
+    price_input = {
+        "variantId": variant_gid,
+        "price": {"amount": str(price), "currencyCode": currency},
+    }
+
+    if compare_price is not None:
+        price_input["compareAtPrice"] = {
+            "amount": str(compare_price),
+            "currencyCode": currency,
+        }
+
     shopify_graphql(
         MUTATION,
         {
             "pl": price_list_id,
-            "prices": [{
-                "variantId": variant_gid,
-                "price": {"amount": str(price), "currencyCode": currency},
-            }],
+            "prices": [price_input],
         },
     )
 
@@ -188,13 +202,7 @@ def airtable_webhook():
     print("\n🔔 WEBHOOK HIT", flush=True)
 
     secret = (request.headers.get("X-Secret-Token") or "").strip()
-    expected = (WEBHOOK_SECRET or "").strip()
-
-    print("🔑 Secret received:", repr(secret), flush=True)
-    print("🔑 Secret expected:", repr(expected), flush=True)
-
-    if secret != expected:
-        print("❌ Unauthorized", flush=True)
+    if secret != WEBHOOK_SECRET:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
@@ -206,44 +214,46 @@ def airtable_webhook():
         "America": _to_number(data.get("America Price")),
     }
 
+    compare_prices = {
+        "UAE": _to_number(data.get("UAE comparison price")),
+        "Asia": _to_number(data.get("Asia comparison price")),
+        "America": _to_number(data.get("America comparison price")),
+    }
+
     if not sku:
         return jsonify({"error": "SKU missing"}), 400
 
-    variant_gid, variant_id, inventory_item_id = get_variant_product_and_inventory_by_sku(sku)
+    variant_gid, variant_id, _ = get_variant_product_and_inventory_by_sku(sku)
     if not variant_gid:
         return jsonify({"error": "Variant not found"}), 404
 
-    # ✅ UAE default price (auto detect)
+    # ✅ UAE (variant level)
     if prices["UAE"] is not None:
-        old_price = get_variant_default_price(variant_id)
-        if old_price != prices["UAE"]:
-            update_variant_default_price(variant_id, prices["UAE"])
-        else:
-            print("⏭️ UAE unchanged", flush=True)
+        update_variant_default_price(
+            variant_id,
+            prices["UAE"],
+            compare_prices["UAE"]
+        )
 
     price_lists = get_market_price_lists()
 
-    # ✅ Market prices (auto detect)
-    for market, new_price in prices.items():
-        if new_price is None:
+    # ✅ Market prices + comparison prices
+    for market, price in prices.items():
+        if price is None:
             continue
 
         market_name = MARKET_NAMES.get(market)
-        if not market_name:
-            continue
-
         pl = price_lists.get(market_name)
         if not pl:
             continue
 
-        old_price = get_price_list_price(pl["id"], variant_gid)
-        print(f"🔎 {market} | Old: {old_price} | New: {new_price}", flush=True)
-
-        if old_price == new_price:
-            print(f"⏭️ {market} unchanged", flush=True)
-            continue
-
-        update_price_list(pl["id"], variant_gid, new_price, pl["currency"])
+        update_price_list(
+            pl["id"],
+            variant_gid,
+            price,
+            compare_prices.get(market),
+            pl["currency"],
+        )
 
     print("🎉 SYNC COMPLETE", flush=True)
     return jsonify({"status": "success"}), 200
