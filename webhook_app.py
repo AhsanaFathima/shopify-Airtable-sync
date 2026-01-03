@@ -7,7 +7,7 @@ app = Flask(__name__)
 print("🚀 Flask app starting...", flush=True)
 
 # ---------- ENV ----------
-SHOP = os.getenv["SHOPIFY_SHOP"]
+SHOP = os.getenv("SHOPIFY_SHOP")
 TOKEN = os.environ["SHOPIFY_API_TOKEN"]
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-07")
