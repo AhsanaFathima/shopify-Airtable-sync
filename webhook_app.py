@@ -7,7 +7,6 @@ app = Flask(__name__)
 print("🚀 Flask app starting...", flush=True)
 
 # ---------- ENV ----------
-# ---------- ENV ----------
 SHOP = os.getenv("SHOPIFY_SHOP")
 TOKEN = os.getenv("SHOPIFY_API_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
@@ -15,8 +14,10 @@ API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-07")
 
 if not SHOP:
     print("⚠️ SHOPIFY_SHOP not set", flush=True)
+
 if not TOKEN:
     print("⚠️ SHOPIFY_API_TOKEN not set", flush=True)
+
 if not WEBHOOK_SECRET:
     #print("⚠️ WEBHOOK_SECRET not set", flush=True)
 
