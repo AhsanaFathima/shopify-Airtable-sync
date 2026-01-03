@@ -21,12 +21,11 @@ if not TOKEN:
 if not WEBHOOK_SECRET:
     print("⚠️ WEBHOOK_SECRET not set", flush=True)
 
-
 # ---------- MARKET MAPPING ----------
 MARKET_NAMES = {
     "UAE": "United Arab Emirates",
     "Asia": "Asia Market with 55 rate",
-    "America": "America catlog",
+    "America": "America catalog",
 }
 
 # ---------- CACHE ----------
@@ -158,10 +157,11 @@ def get_price_list_price(price_list_id, variant_gid):
 # ---------- UPDATE ----------
 def update_variant_default_price(variant_id, price, compare_price=None):
     payload = {"variant": {"id": int(variant_id), "price": str(price)}}
+
     if compare_price is not None:
         payload["variant"]["compare_at_price"] = str(compare_price)
 
-    print("💲 Updating UAE price →", payload, flush=True)
+    print("💲 Updating default price →", payload, flush=True)
 
     requests.put(
         _rest_url(f"variants/{variant_id}.json"),
@@ -202,7 +202,7 @@ def update_price_list(price_list_id, variant_gid, price, currency, compare_price
 # ---------- ROUTES ----------
 @app.route("/", methods=["GET"])
 def home():
-    return "Airtable-Shopify Sync Running", 200
+    return "✅ Airtable → Shopify Sync is running", 200
 
 @app.route("/airtable-webhook", methods=["POST"])
 def airtable_webhook():
@@ -267,6 +267,6 @@ def airtable_webhook():
     print("🎉 SYNC COMPLETE", flush=True)
     return jsonify({"status": "success"}), 200
 
-
+# ---------- LOCAL RUN ----------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
