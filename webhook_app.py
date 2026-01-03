@@ -19,7 +19,7 @@ if not TOKEN:
     print("⚠️ SHOPIFY_API_TOKEN not set", flush=True)
 
 if not WEBHOOK_SECRET:
-    #print("⚠️ WEBHOOK_SECRET not set", flush=True)
+    print("⚠️ WEBHOOK_SECRET not set", flush=True)
 
 
 # ---------- MARKET MAPPING ----------
