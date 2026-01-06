@@ -25,7 +25,7 @@ if not WEBHOOK_SECRET:
 MARKET_NAMES = {
     "UAE": "United Arab Emirates",
     "Asia": "Asia Market with 55 rate",
-    "America": "America catalog",
+    "America": "America catlog",
 }
 
 # ---------- CACHE ----------
