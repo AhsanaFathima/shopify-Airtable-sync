@@ -12,15 +12,6 @@ TOKEN = os.getenv("SHOPIFY_API_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2024-07")
 
-if not SHOP:
-    print("⚠️ SHOPIFY_SHOP not set", flush=True)
-
-if not TOKEN:
-    print("⚠️ SHOPIFY_API_TOKEN not set", flush=True)
-
-if not WEBHOOK_SECRET:
-    print("⚠️ WEBHOOK_SECRET not set", flush=True)
-
 # ---------- MARKET MAPPING ----------
 MARKET_NAMES = {
     "UAE": "United Arab Emirates",
@@ -73,10 +64,7 @@ def get_market_price_lists():
         nodes {
           title
           status
-          priceList {
-            id
-            currency
-          }
+          priceList { id currency }
         }
       }
     }
@@ -101,9 +89,7 @@ def get_variant_product_and_inventory_by_sku(sku):
     QUERY = """
     query ($q: String!) {
       productVariants(first: 1, query: $q) {
-        nodes {
-          id
-        }
+        nodes { id }
       }
     }
     """
@@ -123,41 +109,9 @@ def get_variant_product_and_inventory_by_sku(sku):
     inventory_item_id = r.json()["variant"]["inventory_item_id"]
     return variant_gid, variant_id, inventory_item_id
 
-# ---------- CURRENT SHOPIFY PRICES ----------
-def get_variant_default_price(variant_id):
-    r = requests.get(_rest_url(f"variants/{variant_id}.json"), headers=_json_headers())
-    r.raise_for_status()
-    return float(r.json()["variant"]["price"])
-
-def get_price_list_price(price_list_id, variant_gid):
-    QUERY = """
-    query ($pl: ID!, $vid: ID!) {
-      priceList(id: $pl) {
-        prices(first: 1, query: $vid) {
-          nodes {
-            price { amount }
-            compareAtPrice { amount }
-          }
-        }
-      }
-    }
-    """
-    try:
-        res = shopify_graphql(QUERY, {"pl": price_list_id, "vid": variant_gid})
-        nodes = res["data"]["priceList"]["prices"]["nodes"]
-        if not nodes:
-            return None, None
-        return (
-            float(nodes[0]["price"]["amount"]),
-            float(nodes[0]["compareAtPrice"]["amount"]) if nodes[0].get("compareAtPrice") else None
-        )
-    except Exception:
-        return None, None
-
-# ---------- UPDATE ----------
+# ---------- UPDATE PRICES (UNCHANGED) ----------
 def update_variant_default_price(variant_id, price, compare_price=None):
     payload = {"variant": {"id": int(variant_id), "price": str(price)}}
-
     if compare_price is not None:
         payload["variant"]["compare_at_price"] = str(compare_price)
 
@@ -199,6 +153,27 @@ def update_price_list(price_list_id, variant_gid, price, currency, compare_price
         {"pl": price_list_id, "prices": [price_input]},
     )
 
+# ---------- INVENTORY (FIXED & ADDED) ----------
+def get_primary_location_id():
+    r = requests.get(_rest_url("locations.json"), headers=_json_headers())
+    r.raise_for_status()
+    locations = r.json().get("locations", [])
+    if not locations:
+        raise RuntimeError("No Shopify locations found")
+    return locations[0]["id"]
+
+def set_inventory_absolute(inventory_item_id, location_id, quantity):
+    print(f"📦 Updating stock → {quantity}", flush=True)
+    requests.post(
+        _rest_url("inventory_levels/set.json"),
+        headers=_json_headers(),
+        json={
+            "inventory_item_id": int(inventory_item_id),
+            "location_id": int(location_id),
+            "available": int(quantity),
+        },
+    ).raise_for_status()
+
 # ---------- ROUTES ----------
 @app.route("/", methods=["GET"])
 def home():
@@ -208,10 +183,7 @@ def home():
 def airtable_webhook():
     print("\n🔔 WEBHOOK HIT", flush=True)
 
-    secret = (request.headers.get("X-Secret-Token") or "").strip()
-    expected = (WEBHOOK_SECRET or "").strip()
-
-    if secret != expected:
+    if (request.headers.get("X-Secret-Token") or "").strip() != WEBHOOK_SECRET:
         return jsonify({"error": "Unauthorized"}), 401
 
     data = request.json or {}
@@ -229,10 +201,12 @@ def airtable_webhook():
         "America": _to_number(data.get("America Comparison Price")),
     }
 
+    qty = _to_number(data.get("Qty given in shopify"))
+
     if not sku:
         return jsonify({"error": "SKU missing"}), 400
 
-    variant_gid, variant_id, _ = get_variant_product_and_inventory_by_sku(sku)
+    variant_gid, variant_id, inventory_item_id = get_variant_product_and_inventory_by_sku(sku)
     if not variant_gid:
         return jsonify({"error": "Variant not found"}), 404
 
@@ -244,6 +218,11 @@ def airtable_webhook():
             compare_prices["UAE"]
         )
 
+    # STOCK UPDATE ✅
+    if qty is not None:
+        location_id = get_primary_location_id()
+        set_inventory_absolute(inventory_item_id, location_id, qty)
+
     price_lists = get_market_price_lists()
 
     # Market price lists
@@ -251,8 +230,7 @@ def airtable_webhook():
         if price is None:
             continue
 
-        market_name = MARKET_NAMES.get(market)
-        pl = price_lists.get(market_name)
+        pl = price_lists.get(MARKET_NAMES.get(market))
         if not pl:
             continue
 
@@ -267,6 +245,6 @@ def airtable_webhook():
     print("🎉 SYNC COMPLETE", flush=True)
     return jsonify({"status": "success"}), 200
 
-# ---------- LOCAL RUN ----------
+# ---------- RUN ----------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
